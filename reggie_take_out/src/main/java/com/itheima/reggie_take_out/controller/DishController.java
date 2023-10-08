@@ -12,10 +12,12 @@ import com.itheima.reggie_take_out.service.DishService;
 import com.itheima.reggie_take_out.utils.R;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 //菜品管理
 @RestController
@@ -30,9 +32,14 @@ public class DishController {
     @Autowired
     private CategoryService categoryService;
 
+    @Autowired
+    private RedisTemplate redisTemplate;
+
     @PostMapping
     public R<String> save(@RequestBody DishDto dishdto){
         dishservice.saveWithFlavor(dishdto);
+        //删除redis中的缓存
+        redisTemplate.delete("dish_"+dishdto.getCategoryId()+"_1");
         return R.success("新增菜品成功");
     }
     //菜品信息分页查询
@@ -78,6 +85,8 @@ public class DishController {
     @PutMapping
     public R<String> update(@RequestBody DishDto dishdto){
         dishservice.updateWithFlavor(dishdto);
+        //删除redis中的缓存
+        redisTemplate.delete("dish_"+dishdto.getCategoryId()+"_1");
         return R.success("新增菜品成功");
     }
     /*@GetMapping("/list")
@@ -94,6 +103,14 @@ public class DishController {
     @GetMapping("/list")
     //根据菜品分类id查询菜品信息
     public R<List<DishDto>> list(Dish dish){//使用dish而不是categoryid是为了通用性强
+        List<DishDto> dishDtoList_Cache = null;
+        String key = "dish_"+dish.getCategoryId()+"_"+dish.getStatus();
+        //先从redis中获取缓存数据
+        dishDtoList_Cache = (List<DishDto>)redisTemplate.opsForValue().get(key);
+        if(dishDtoList_Cache!=null){
+            return R.success(dishDtoList_Cache);
+        }
+        //如果redis中没有缓存数据，就从数据库中查询
         LambdaQueryWrapper<Dish> qw = new LambdaQueryWrapper<>();
         qw.eq(dish.getCategoryId()!=null,Dish::getCategoryId,dish.getCategoryId());
         qw.orderByAsc(Dish::getSort).orderByDesc(Dish::getUpdateTime);
@@ -109,6 +126,8 @@ public class DishController {
             dishDto.setFlavors(dfs);
             list2.add(dishDto);
         });
+        //将查询到的数据存入redis
+        redisTemplate.opsForValue().set(key,list2,60, TimeUnit.MINUTES);
         return R.success(list2);
 
     }
